@@ -4,8 +4,8 @@ CFLAGS = -Werror -Wall -std=c99
 besttq: besttq.o
 	$(CC) -o bin/$@ $(CFLAGS) bin/obj/$?
 
-.c.o:
-	$(CC) -o bin/obj/$@ $(CFLAGS) $<
+# .c.o:
+# 	$(CC) -o bin/obj/$@ $(CFLAGS) $<
 
 besttq.o: besttq.c
 	mkdir -p bin/obj
