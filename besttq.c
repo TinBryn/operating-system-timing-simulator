@@ -135,14 +135,14 @@ void parse_tracefile(char program[], char tracefile[])
         {   //  AN I/O EVENT FOR THE CURRENT PROCESS, STORE THIS SOMEWHERE
             process *cur_process = processes + num_processes;
             event *cur_event = cur_process->events + cur_process->num_events;
-            cur_process->events++;
+            cur_process->num_events += 1;
 
             cur_event->type = ev_io;
             cur_event->start_time = atoi(word1);
             //find index of device name
             for (int i = 0; i < num_devices; i++)
             {
-                if (0 == strcmp(word2, devices[i]))
+                if (0 == strcmp(word2, devices[i].name))
                 {
                     cur_event->device_index = i;
                     break;
@@ -155,7 +155,7 @@ void parse_tracefile(char program[], char tracefile[])
         {   //  PRESUMABLY THE LAST EVENT WE'LL SEE FOR THE CURRENT PROCESS
             process *cur_process = processes + num_processes;
             event *cur_event = cur_process->events + cur_process->num_events;
-            cur_process->events++;
+            cur_process->num_events += 1;
 
             cur_event->type = ev_exit;
             cur_event->start_time = atoi(word1);
