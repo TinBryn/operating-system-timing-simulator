@@ -71,6 +71,9 @@ void parse_tracefile(Tracefile *tf, char const program[], char const tracefile[]
 //  SIMULATE THE JOB-MIX FROM THE TRACEFILE, FOR THE GIVEN TIME-QUANTUM
 void simulate_job_mix(Tracefile *tf, int time_quantum, int *optimal_time_quantum, int *total_process_completion_time)
 {
+    (void)tf;
+    *optimal_time_quantum = 0;
+    *total_process_completion_time = 0;
     printf("running simulate_job_mix( time_quantum = %i usecs )\n",
            time_quantum);
 }
@@ -79,15 +82,19 @@ void simulate_job_mix(Tracefile *tf, int time_quantum, int *optimal_time_quantum
 
 void usage(char const program[]);
 
-//attempts to parse a zero terminated string into a decimal int, otherwise prints a formatted
-//error message that takes the provided string and then terminates the program
-int parse_int(char const *str, char const *format)
+/**
+ * Attempts to parse a string into an integer, if it fails, reports an error and exits the program
+ * @param str - The string to be parsed
+ * @param err - The error message, must be formatted to accept a single string
+ * @return the parsed integer if successful
+ */
+int parse_int(char const *str, char const *err)
 {
     char *ptr;
     int result = strtol(str, &ptr, 10);
     if (str == ptr)
     {
-        printf(format, str);
+        printf(err, str);
         exit(EXIT_FAILURE);
     }
     return result;
