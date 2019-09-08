@@ -21,7 +21,6 @@
 #define MAX_DEVICES             4
 #define MAX_DEVICE_NAME         20
 #define MAX_PROCESSES           50
-// DO NOT USE THIS - #define MAX_PROCESS_EVENTS      1000
 #define MAX_EVENTS_PER_PROCESS    100
 
 #define TIME_CONTEXT_SWITCH     5
@@ -33,44 +32,260 @@
 //  AND THAT THE TOTAL-PROCESS-COMPLETION-TIME WILL NOT EXCEED 2000 SECONDS
 //  (SO YOU CAN SAFELY USE 'STANDARD' 32-BIT ints TO STORE TIMES).
 
-int optimal_time_quantum = 0;
-int total_process_completion_time = 0;
+//  ----------------------------------------------------------------------
+
+typedef struct Device
+{
+    char name[MAX_DEVICE_NAME];
+    int rate; // bytes/sec
+} Device;
+
+typedef struct Event
+{
+    int type;
+    int start_time;
+    int device_index;
+    int data_size;
+} Event;
+
+typedef struct Process
+{
+    int id;
+    int start_time;
+    Event events[MAX_EVENTS_PER_PROCESS];
+    int num_events;
+} Process;
+
+typedef struct Tracefile
+{
+    struct Device devices[MAX_DEVICES];
+    int num_devices;
+    Process processes[MAX_PROCESSES];
+    int num_processes;
+} Tracefile;
+
+void parse_tracefile(Tracefile *tf, char const program[], char const tracefile[]);
 
 //  ----------------------------------------------------------------------
 
-#define CHAR_COMMENT            '#'
-#define MAXWORD                 20
-
-typedef struct
+//  SIMULATE THE JOB-MIX FROM THE TRACEFILE, FOR THE GIVEN TIME-QUANTUM
+void simulate_job_mix(Tracefile *tf, int time_quantum, int *optimal_time_quantum, int *total_process_completion_time)
 {
-    char name[MAX_DEVICE_NAME];
-    //bytes / sec
-    int rate;
-} device;
+    printf("running simulate_job_mix( time_quantum = %i usecs )\n",
+           time_quantum);
+}
+
+//  ----------------------------------------------------------------------
+
+void usage(char const program[]);
+
+//attempts to parse a zero terminated string into a decimal int, otherwise prints a formatted
+//error message that takes the provided string and then terminates the program
+int parse_int(char const *str, char const *format)
+{
+    char *ptr;
+    int result = strtol(str, &ptr, 10);
+    if (str == ptr)
+    {
+        printf(format, str);
+        exit(EXIT_FAILURE);
+    }
+    return result;
+}
+
+
+int main(int argc, char const *argv[])
+{
+    int TQ0 = 0, TQfinal = 0, TQinc = 0;
+
+//  CALLED WITH THE PROVIDED TRACEFILE (NAME) AND THREE TIME VALUES
+    if (argc == 5)
+    {
+        TQ0 = parse_int(argv[2], "Error: non decimal initial time quantum (%s)");
+        TQfinal = parse_int(argv[3], "Error: non decimal final time quantum (%s)");
+        TQinc = parse_int(argv[4], "Error: non decimal time quantum increment (%s)");
+
+        if (TQ0 < 1 || TQfinal < TQ0 || TQinc < 1)
+        {
+            usage(argv[0]);
+        }
+    }
+//  CALLED WITH THE PROVIDED TRACEFILE (NAME) AND ONE TIME VALUE
+    else if (argc == 3)
+    {
+        TQ0 = parse_int(argv[2], "Error: non decimal initial time quantum (%s)");
+
+        if (TQ0 < 1)
+        {
+            usage(argv[0]);
+        }
+        TQfinal = TQ0;
+        TQinc = 1;
+    }
+//  CALLED INCORRECTLY, REPORT THE ERROR AND TERMINATE
+    else
+    {
+        usage(argv[0]);
+    }
+
+//  READ THE JOB-MIX FROM THE TRACEFILE, STORING INFORMATION IN DATA-STRUCTURES
+    Tracefile tf = {};
+
+    parse_tracefile(&tf, argv[0], argv[1]);
+
+//  SIMULATE THE JOB-MIX FROM THE TRACEFILE, VARYING THE TIME-QUANTUM EACH TIME.
+//  WE NEED TO FIND THE BEST (SHORTEST) TOTAL-PROCESS-COMPLETION-TIME
+//  ACROSS EACH OF THE TIME-QUANTA BEING CONSIDERED
+
+    int optimal_time_quantum = 0;
+    int total_process_completion_time = 0;
+
+    for (int time_quantum = TQ0; time_quantum <= TQfinal; time_quantum += TQinc)
+    {
+        simulate_job_mix(&tf, time_quantum, &optimal_time_quantum, &total_process_completion_time);
+    }
+
+//  PRINT THE PROGRAM'S RESULT
+    printf("best %i %i\n", optimal_time_quantum, total_process_completion_time);
+
+    exit(EXIT_SUCCESS);
+}
+
+//  vim: ts=8 sw=4
+
+
 
 enum event_type
 {
     ev_io, ev_exit
 };
 
-typedef struct
+void push_io_event_detail(Event *e, Device devices[], int num_devices, char const *start_time, char const *device,
+                          char const *data)
 {
-    int type;
-    int start_time;
-    int device_index;
-    int data_size;
-} event;
+    e->type = ev_io;
+    for (int i = 0; i < num_devices; i++)
+    {
+        if (0 == strcmp(device, devices[i].name))
+        {
+            e->device_index = i;
+            break;
+        }
+    }
 
+    e->start_time = parse_int(start_time, "Error: io event with non decimal start time (%s)");
+    e->data_size = parse_int(data, "Error: io event with non decimal data size (%s)");
 
-typedef struct
+}
+
+void push_io_event(Tracefile *tf, char const *start_time, char const *device, char const *data)
 {
-    int id;
-    int start_time;
-    event events[MAX_EVENTS_PER_PROCESS];
-    int num_events;
-} process;
 
-void parse_tracefile(char program[], char tracefile[])
+    Process *p = tf->processes + tf->num_processes;
+    Event *e = p->events + p->num_events;
+    push_io_event_detail(e, tf->devices, tf->num_devices, start_time, device, data);
+
+    p->num_events++;
+}
+
+void push_exit_event_detail(Event *e, char const *start_time)
+{
+    e->type = ev_exit;
+    e->start_time = parse_int(start_time, "Error: exit event with non decimal start time (%s)");
+
+}
+
+void push_exit_event(Tracefile *tf, char const *start_time)
+{
+    Process *p = tf->processes + tf->num_processes;
+    Event *e = p->events + p->num_events;
+    push_exit_event_detail(e, start_time);
+
+    p->num_events++;
+}
+
+void push_device(Tracefile *tf, char const *name, char const *rate)
+{
+    tf->devices[tf->num_devices].rate = parse_int(rate, "Error: device with non decimal rate (%s)");
+    strcpy(tf->devices[tf->num_devices].name, name);
+    tf->num_devices++;
+}
+
+void push_process(Tracefile *tf, char const *id, char const *start_time)
+{
+    tf->processes[tf->num_processes].id = parse_int(id, "Error: process with non decimal id (%s)");
+    tf->processes[tf->num_processes].start_time = parse_int(start_time, "Error: process with non decimal start time (%s)");
+}
+
+#define CHAR_COMMENT            '#'
+#define MAXWORD                 20
+
+void parse_line(Tracefile *tf, char const *program, char const *tracefile, char const *line, int line_num)
+{
+    //  COMMENT LINES ARE SIMPLY SKIPPED
+    if (line[0] == CHAR_COMMENT)
+    {
+        return;
+    }
+
+    //  ATTEMPT TO BREAK EACH LINE INTO A NUMBER OF WORDS, USING sscanf()
+    char word[4][MAXWORD];
+    int nwords = sscanf(line, "%s %s %s %s", word[0], word[1], word[2], word[3]);
+
+#undef  MAXWORD
+#undef  CHAR_COMMENT
+
+    //  WE WILL SIMPLY IGNORE ANY LINE WITHOUT ANY WORDS
+    if (nwords <= 0)
+    {
+        return;
+    }
+
+    //  LOOK FOR LINES DEFINING DEVICES, PROCESSES, AND PROCESS EVENTS
+    if (nwords == 4 && strcmp(word[0], "device") == 0)
+    {
+        // device <name> <rate> bytes/sec
+        push_device(tf, word[1], word[2]);
+    }
+
+    else if (nwords == 4 && strcmp(word[0], "process") == 0)
+    {
+        // process <id> <start_time> {
+        push_process(tf, word[1], word[2]);
+    }
+
+    else if (nwords == 4 && strcmp(word[0], "i/o") == 0)
+    {
+        // i/o <start_time> <device_name> <data_size>
+        push_io_event(tf, word[1], word[2], word[3]);
+    }
+
+    else if (nwords == 2 && strcmp(word[0], "exit") == 0)
+    {
+        // exit <start_time>
+        push_exit_event(tf, word[1]);
+    }
+
+    else if (nwords == 1 && strcmp(word[0], "}") == 0)
+    {
+        // JUST THE END OF THE CURRENT PROCESS'S EVENTS
+        tf->num_processes++;
+    }
+
+    else if (nwords == 1 && strcmp(word[0], "reboot") == 0)
+    {
+        // NOTHING REALLY REQUIRED, DEVICE DEFINITIONS HAVE FINISHED
+    }
+
+    else
+    {
+        printf("%s: line %i of '%s' is unrecognized",
+               program, line_num, tracefile);
+        exit(EXIT_FAILURE);
+    }
+}
+
+void parse_tracefile(Tracefile *tf, char const *program, char const *tracefile)
 {
 //  ATTEMPT TO OPEN OUR TRACEFILE, REPORTING AN ERROR IF WE CAN'T
     FILE *fp = fopen(tracefile, "r");
@@ -84,166 +299,18 @@ void parse_tracefile(char program[], char tracefile[])
     char line[BUFSIZ];
     int lc = 0;
 
-    device devices[MAX_DEVICES];
-    int num_devices = 0;
-
-    process processes[MAX_PROCESSES];
-    int num_processes = 0;
-
 //  READ EACH LINE FROM THE TRACEFILE, UNTIL WE REACH THE END-OF-FILE
     while (fgets(line, sizeof line, fp) != NULL)
     {
         ++lc;
 
-//  COMMENT LINES ARE SIMPLY SKIPPED
-        if (line[0] == CHAR_COMMENT)
-        {
-            continue;
-        }
-
-//  ATTEMPT TO BREAK EACH LINE INTO A NUMBER OF WORDS, USING sscanf()
-        char word0[MAXWORD], word1[MAXWORD], word2[MAXWORD], word3[MAXWORD];
-        int nwords = sscanf(line, "%s %s %s %s", word0, word1, word2, word3);
-
-//      printf("%i = %s", nwords, line);
-
-//  WE WILL SIMPLY IGNORE ANY LINE WITHOUT ANY WORDS
-        if (nwords <= 0)
-        {
-            continue;
-        }
-//  LOOK FOR LINES DEFINING DEVICES, PROCESSES, AND PROCESS EVENTS
-        if (nwords == 4 && strcmp(word0, "device") == 0)
-        {   // FOUND A DEVICE DEFINITION, WE'LL NEED TO STORE THIS SOMEWHERE
-            strcpy(devices[num_devices].name, word1);
-            devices[num_devices].rate = atoi(word2);
-            num_devices++;
-        }
-
-        else if (nwords == 1 && strcmp(word0, "reboot") == 0)
-        {   // NOTHING REALLY REQUIRED, DEVICE DEFINITIONS HAVE FINISHED
-
-        }
-
-        else if (nwords == 4 && strcmp(word0, "process") == 0)
-        {   // FOUND THE START OF A PROCESS'S EVENTS, STORE THIS SOMEWHERE
-            processes[num_processes].id = atoi(word1);
-            processes[num_processes].start_time = atoi(word2);
-        }
-
-        else if (nwords == 4 && strcmp(word0, "i/o") == 0)
-        {   //  AN I/O EVENT FOR THE CURRENT PROCESS, STORE THIS SOMEWHERE
-            process *cur_process = processes + num_processes;
-            event *cur_event = cur_process->events + cur_process->num_events;
-            cur_process->num_events += 1;
-
-            cur_event->type = ev_io;
-            cur_event->start_time = atoi(word1);
-            //find index of device name
-            for (int i = 0; i < num_devices; i++)
-            {
-                if (0 == strcmp(word2, devices[i].name))
-                {
-                    cur_event->device_index = i;
-                    break;
-                }
-            }
-            cur_event->data_size = atoi(word3);
-        }
-
-        else if (nwords == 2 && strcmp(word0, "exit") == 0)
-        {   //  PRESUMABLY THE LAST EVENT WE'LL SEE FOR THE CURRENT PROCESS
-            process *cur_process = processes + num_processes;
-            event *cur_event = cur_process->events + cur_process->num_events;
-            cur_process->num_events += 1;
-
-            cur_event->type = ev_exit;
-            cur_event->start_time = atoi(word1);
-        }
-
-        else if (nwords == 1 && strcmp(word0, "}") == 0)
-        {   //  JUST THE END OF THE CURRENT PROCESS'S EVENTS
-            num_processes++;
-        }
-        else
-        {
-            printf("%s: line %i of '%s' is unrecognized",
-                   program, lc, tracefile);
-            exit(EXIT_FAILURE);
-        }
+        parse_line(tf, program, tracefile, line, lc);
     }
     fclose(fp);
 }
 
-#undef  MAXWORD
-#undef  CHAR_COMMENT
-
-//  ----------------------------------------------------------------------
-
-//  SIMULATE THE JOB-MIX FROM THE TRACEFILE, FOR THE GIVEN TIME-QUANTUM
-void simulate_job_mix(int time_quantum)
-{
-    printf("running simulate_job_mix( time_quantum = %i usecs )\n",
-           time_quantum);
-}
-
-//  ----------------------------------------------------------------------
-
-void usage(char program[])
+void usage(char const *program)
 {
     printf("Usage: %s tracefile TQ-first [TQ-final TQ-increment]\n", program);
     exit(EXIT_FAILURE);
 }
-
-int main(int argcount, char *argvalue[])
-{
-    int TQ0 = 0, TQfinal = 0, TQinc = 0;
-
-//  CALLED WITH THE PROVIDED TRACEFILE (NAME) AND THREE TIME VALUES
-    if (argcount == 5)
-    {
-        TQ0 = atoi(argvalue[2]);
-        TQfinal = atoi(argvalue[3]);
-        TQinc = atoi(argvalue[4]);
-
-        if (TQ0 < 1 || TQfinal < TQ0 || TQinc < 1)
-        {
-            usage(argvalue[0]);
-        }
-    }
-//  CALLED WITH THE PROVIDED TRACEFILE (NAME) AND ONE TIME VALUE
-    else if (argcount == 3)
-    {
-        TQ0 = atoi(argvalue[2]);
-        if (TQ0 < 1)
-        {
-            usage(argvalue[0]);
-        }
-        TQfinal = TQ0;
-        TQinc = 1;
-    }
-//  CALLED INCORRECTLY, REPORT THE ERROR AND TERMINATE
-    else
-    {
-        usage(argvalue[0]);
-    }
-
-//  READ THE JOB-MIX FROM THE TRACEFILE, STORING INFORMATION IN DATA-STRUCTURES
-    parse_tracefile(argvalue[0], argvalue[1]);
-
-//  SIMULATE THE JOB-MIX FROM THE TRACEFILE, VARYING THE TIME-QUANTUM EACH TIME.
-//  WE NEED TO FIND THE BEST (SHORTEST) TOTAL-PROCESS-COMPLETION-TIME
-//  ACROSS EACH OF THE TIME-QUANTA BEING CONSIDERED
-
-    for (int time_quantum = TQ0; time_quantum <= TQfinal; time_quantum += TQinc)
-    {
-        simulate_job_mix(time_quantum);
-    }
-
-//  PRINT THE PROGRAM'S RESULT
-    printf("best %i %i\n", optimal_time_quantum, total_process_completion_time);
-
-    exit(EXIT_SUCCESS);
-}
-
-//  vim: ts=8 sw=4
