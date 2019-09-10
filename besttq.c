@@ -56,20 +56,38 @@ typedef struct Process
     int num_events;
 } Process;
 
+
+
 typedef struct Tracefile
 {
-    struct Device devices[MAX_DEVICES];
+    Device devices[MAX_DEVICES];
     int num_devices;
     Process processes[MAX_PROCESSES];
     int num_processes;
 } Tracefile;
 
+typedef struct Queue
+{
+    int items[MAX_PROCESSES];
+    int front;
+    int size;
+} Queue;
+
+
+
+int queue_size(Queue const *q);
+int queue_at(Queue const *q, int i);
+void queue_enqueue(Queue *q, int item);
+int queue_dequeue(Queue *q);
+
 void parse_tracefile(Tracefile *tf, char const program[], char const tracefile[]);
+
+void print_tracefile(Tracefile const *tf);
 
 //  ----------------------------------------------------------------------
 
 //  SIMULATE THE JOB-MIX FROM THE TRACEFILE, FOR THE GIVEN TIME-QUANTUM
-void simulate_job_mix(Tracefile *tf, int time_quantum, int *optimal_time_quantum, int *total_process_completion_time)
+void simulate_job_mix(Tracefile const *tf, int time_quantum, int *optimal_time_quantum, int *total_process_completion_time)
 {
     (void)tf;
     *optimal_time_quantum = 0;
@@ -139,6 +157,8 @@ int main(int argc, char const *argv[])
     Tracefile tf = {};
 
     parse_tracefile(&tf, argv[0], argv[1]);
+
+    print_tracefile(&tf);
 
 //  SIMULATE THE JOB-MIX FROM THE TRACEFILE, VARYING THE TIME-QUANTUM EACH TIME.
 //  WE NEED TO FIND THE BEST (SHORTEST) TOTAL-PROCESS-COMPLETION-TIME
@@ -320,4 +340,37 @@ void usage(char const *program)
 {
     printf("Usage: %s tracefile TQ-first [TQ-final TQ-increment]\n", program);
     exit(EXIT_FAILURE);
+}
+
+void print_tracefile(Tracefile const *tf)
+{
+    for(int i = 0; i < tf->num_devices; i++)
+    {
+        printf("device   %s %i bytes/sec\n", tf->devices[i].name, tf->devices[i].rate);
+    }
+    printf("reboot\n");
+    for (int i=0; i < tf->num_processes; i++)
+    {
+        Process *p = &tf->processes[i];
+        printf("process %i %i {\n", p->id, p->start_time);
+        for (int j=0; j < p->num_events; j++)
+        {
+            Event *e = &p->events[j];
+            switch(e->type)
+            {
+                case ev_io:
+                    printf("  i/o ");
+                    break;
+                case ev_exit:
+                    printf("  exit ");
+                    break;
+                default:
+                    printf("unknown event type");
+                    break;
+            }
+            printf("%i %s %i\n", e->start_time, tf->devices[e->device_index].name, e->data_size);
+        }
+        printf("}\n");
+    }
+
 }
