@@ -89,7 +89,7 @@ void print_tracefile(Tracefile const *tf);
 //  SIMULATE THE JOB-MIX FROM THE TRACEFILE, FOR THE GIVEN TIME-QUANTUM
 void simulate_job_mix(Tracefile const *tf, int time_quantum, int *optimal_time_quantum, int *total_process_completion_time)
 {
-    (void)tf;
+    (void) tf;
     *optimal_time_quantum = 0;
     *total_process_completion_time = 0;
     printf("running simulate_job_mix( time_quantum = %i usecs )\n",
@@ -351,11 +351,11 @@ void print_tracefile(Tracefile const *tf)
     printf("reboot\n");
     for (int i=0; i < tf->num_processes; i++)
     {
-        Process *p = &tf->processes[i];
+        Process const *p = &tf->processes[i];
         printf("process %i %i {\n", p->id, p->start_time);
         for (int j=0; j < p->num_events; j++)
         {
-            Event *e = &p->events[j];
+            Event const *e = &p->events[j];
             switch(e->type)
             {
                 case ev_io:
