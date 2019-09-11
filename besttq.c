@@ -374,3 +374,20 @@ void print_tracefile(Tracefile const *tf)
     }
 
 }
+
+void queue_enqueue(Queue *q, int item)
+{
+
+}
+int queue_size(Queue const *q)
+{
+    return q->size;
+}
+int queue_at(Queue const *q, int i)
+{
+    return 0;
+}
+int queue_dequeue(Queue *q)
+{
+    return 0;
+}
