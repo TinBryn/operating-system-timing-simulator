@@ -74,7 +74,7 @@ typedef struct Queue
     int size;
 } Queue;
 
-
+void queue_init(Queue *q);
 int queue_size(Queue const *q);
 int queue_at(Queue const *q, int i);
 void queue_enqueue(Queue *q, int item);
@@ -87,14 +87,15 @@ void print_tracefile(Tracefile const *tf);
 //  ----------------------------------------------------------------------
 
 //  SIMULATE THE JOB-MIX FROM THE TRACEFILE, FOR THE GIVEN TIME-QUANTUM
-void
-simulate_job_mix(Tracefile const *tf, int time_quantum, int *optimal_time_quantum, int *total_process_completion_time)
+int
+simulate_job_mix(Tracefile const *tf, int time_quantum)
 {
     (void) tf;
-    *optimal_time_quantum = 0;
-    *total_process_completion_time = 0;
+    int total_process_completion_time = 0;
     printf("running simulate_job_mix( time_quantum = %i usecs )\n",
            time_quantum);
+
+    return total_process_completion_time;
 }
 
 //  ----------------------------------------------------------------------
@@ -166,15 +167,20 @@ int main(int argc, char const *argv[])
 //  ACROSS EACH OF THE TIME-QUANTA BEING CONSIDERED
 
     int optimal_time_quantum = 0;
-    int total_process_completion_time = 0;
+    int best_total_completion_time = -1;
 
     for (int time_quantum = TQ0; time_quantum <= TQfinal; time_quantum += TQinc)
     {
-        simulate_job_mix(&tf, time_quantum, &optimal_time_quantum, &total_process_completion_time);
+        int current_process_completion_time = simulate_job_mix(&tf, time_quantum);
+        if (best_total_completion_time == -1 || current_process_completion_time < best_total_completion_time)
+        {
+            best_total_completion_time = current_process_completion_time;
+            optimal_time_quantum = time_quantum;
+        }
     }
 
 //  PRINT THE PROGRAM'S RESULT
-    printf("best %i %i\n", optimal_time_quantum, total_process_completion_time);
+    printf("best %i %i\n", optimal_time_quantum, best_total_completion_time);
 
     exit(EXIT_SUCCESS);
 }
@@ -426,4 +432,10 @@ int queue_dequeue(Queue *q)
     //move the front of the queue back one
     q->front = (q->front + 1) % QUEUE_SIZE;
     return item;
+}
+
+void queue_init(Queue *q)
+{
+    q->size = 0;
+    q->front = 0;
 }
