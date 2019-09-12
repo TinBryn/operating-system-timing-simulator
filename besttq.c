@@ -104,6 +104,14 @@ simulate_job_mix(Tracefile const *tf, int time_quantum)
         queue_init(&blocked_queues[i]);
     }
 
+    //find the first process to start
+    int first_start_time = -1;
+    for (int i=0; i < tf->num_processes; i++)
+    {
+        int this_start_time = tf->processes[i].start_time
+        if (first_start_time == -1 || this_start_time < first_start_time)
+            first_start_time = this_start_time
+    }
 
 
 
@@ -184,7 +192,7 @@ int main(int argc, char const *argv[])
     for (int time_quantum = TQ0; time_quantum <= TQfinal; time_quantum += TQinc)
     {
         int current_process_completion_time = simulate_job_mix(&tf, time_quantum);
-        if (best_total_completion_time == -1 || current_process_completion_time < best_total_completion_time)
+        if (best_total_completion_time == -1 || current_process_completion_time <= best_total_completion_time)
         {
             best_total_completion_time = current_process_completion_time;
             optimal_time_quantum = time_quantum;
