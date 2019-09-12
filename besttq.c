@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 /* CITS2002 Project 1 2019
    Name(s):             student-name1 (, student-name2)
@@ -71,6 +72,12 @@ typedef struct ProcessSim
     int progress;
 } ProcessSim;
 
+int min_index3(int a, int b, int c);
+enum event_type
+{
+    ev_io, ev_exit
+};
+
 #define QUEUE_SIZE MAX_PROCESSES
 
 typedef struct Queue
@@ -122,9 +129,6 @@ typedef struct SimulationState
 
 void initialize_simulation(SimulationState *sim, Tracefile const *tf);
 
-void admit_next_process(SimulationState *sim);
-void setup_next_running_event(SimulationState *sim, Tracefile const *tf, int tq);
-
 void print_admit(SimulationState const *sim, const Tracefile *tf);
 void print_dispatch(SimulationState const *sim, Tracefile const *tf);
 void print_refresh(SimulationState const *sim, const Tracefile *tf);
@@ -133,6 +137,20 @@ void print_expire(SimulationState const *sim, const Tracefile *tf);
 
 //  ----------------------------------------------------------------------
 
+int next_process_time(SimulationState const *sim, Tracefile const *tf);
+bool can_admit(SimulationState *sim, const Tracefile *tf);
+
+void admit_handler(SimulationState *sim, const Tracefile *tf);
+void not_running_handler(SimulationState *sim, const Tracefile *tf);
+void dispatch_handler(SimulationState *sim, const Tracefile *tf);
+void io_handler(SimulationState *sim, const Tracefile *tf);
+void running_handler(SimulationState *sim, const Tracefile *tf, int time_quantum);
+void try_admit_running_handler(SimulationState *sim, const Tracefile *tf, int time_quantum);
+void admit_running_handler(SimulationState *sim, const Tracefile *tf);
+void event_handler(SimulationState *sim, const Tracefile *tf);
+void release_handler(SimulationState *sim, Tracefile const *tf);
+void block_handler(SimulationState *sim, const Tracefile *tf);
+void expire_handler(SimulationState *sim, const Tracefile *tf);
 //  SIMULATE THE JOB-MIX FROM THE TRACEFILE, FOR THE GIVEN TIME-QUANTUM
 int simulate_job_mix(Tracefile const *tf, int time_quantum)
 {
@@ -144,13 +162,17 @@ int simulate_job_mix(Tracefile const *tf, int time_quantum)
 
     printf("running simulate_job_mix( time_quantum = %i usecs )\n", time_quantum);
 
-
-    #define ADMIT 0
-    #define DISPATCH 1
-    #define EXPIRE 2
-    #define BLOCK 3
-    #define IO 4
-    #define RELEASE 5
+    #define ADMIT_NOT_RUNNING 0
+    #define NOT_RUNNING 1
+    #define DISPATCH 2
+    #define IO 3
+    #define RUNNING 4
+    #define TRY_ADMIT_RUNNING 5
+    #define ADMIT_RUNNING 6
+    #define EVENT 7
+    #define RELEASE 8
+    #define BLOCK 9
+    #define EXPIRE 10
     #define DONE -1
 
     printf("@0000000  reboot with TQ=%i\n", time_quantum);
@@ -160,71 +182,48 @@ int simulate_job_mix(Tracefile const *tf, int time_quantum)
     {
         switch (sim.next_event)
         {
-            case ADMIT:
-                printf("admit\n");
-                admit_next_process(&sim);
-                print_admit(&sim, tf);
-                sim.next_process++;
-                if (sim.running_process == -1)
-                {
-                    // no running event
-                    sim.next_event = DISPATCH;
-                    sim.time += TIME_CONTEXT_SWITCH;
-                }
-                else
-                {
-                    // a process is running so need to see what happens next
-                    setup_next_running_event(&sim, tf, time_quantum);
-                }
+            case ADMIT_NOT_RUNNING:
+                admit_handler(&sim, tf);
+                break;
+
+            case NOT_RUNNING:
+                not_running_handler(&sim, tf);
                 break;
 
             case DISPATCH:
-                printf("dispatch\n");
-                sim.running_process = queue_dequeue(&sim.admit_queue);
-                print_dispatch(&sim, tf);
-                setup_next_running_event(&sim, tf, time_quantum);
+                dispatch_handler(&sim, tf);
+                break;
+
+            case IO:
+                io_handler(&sim, tf);
+                break;
+
+            case RUNNING:
+                running_handler(&sim, tf, time_quantum);
+                break;
+
+            case TRY_ADMIT_RUNNING:
+                try_admit_running_handler(&sim, tf, time_quantum);
+                break;
+
+            case ADMIT_RUNNING:
+                admit_running_handler(&sim, tf);
+                break;
+
+            case EVENT:
+                event_handler(&sim, tf);
+                break;
+
+            case RELEASE:
+                release_handler(&sim, tf);
+                break;
+
+            case BLOCK:
+                block_handler(&sim, tf);
                 break;
 
             case EXPIRE:
-                printf("expire\n");
-                if (queue_size(&sim.admit_queue) == 0)
-                {
-                    print_refresh(&sim, tf);
-                    setup_next_running_event(&sim, tf, time_quantum);
-                }
-                else //there is something waiting so put this into the queue
-                {
-                    print_expire(&sim, tf);
-                    queue_enqueue(&sim.admit_queue, sim.running_process);
-                    sim.running_process = -1;
-                    sim.next_event = DISPATCH;
-                    sim.time += TIME_CONTEXT_SWITCH;
-                }
-                break;
-            case BLOCK:
-                printf("block\n");
-                break;
-            case IO:
-                printf("i/o\n");
-                break;
-            case RELEASE:
-                printf("release\n");
-                print_release(&sim, tf);
-                sim.running_process = -1;
-                if (queue_size(&sim.admit_queue) > 0)
-                {
-                    sim.next_event = DISPATCH;
-                    sim.time += TIME_CONTEXT_SWITCH;
-                }
-                else if (sim.next_process < tf->num_processes)
-                {
-                    sim.next_event = ADMIT;
-                    sim.time = tf->processes[sim.next_process].start_time;
-                }
-                else
-                {
-                    sim.next_event = DONE;
-                }
+                expire_handler(&sim, tf);
                 break;
             default:
                 break;
@@ -233,6 +232,180 @@ int simulate_job_mix(Tracefile const *tf, int time_quantum)
 
 
     return sim.time - start_time;
+}
+void admit_handler(SimulationState *sim, const Tracefile *tf)
+{
+    printf("admit\n");
+    if (can_admit(sim, tf))
+    {
+        queue_enqueue(&sim->admit_queue, sim->next_process);
+        print_admit(sim, tf);
+        sim->next_process++;
+    }
+    sim->next_event = NOT_RUNNING;
+}
+void not_running_handler(SimulationState *sim, const Tracefile *tf)
+{
+    printf("not running\n");
+    //todo: branch to IO events
+    if (can_admit(sim, tf))
+    {
+        int time_admit = next_process_time(sim, tf);
+        if (time_admit < TIME_CONTEXT_SWITCH)   //can admit before dispatch
+        {
+            sim->next_event = ADMIT_NOT_RUNNING;
+            sim->time += time_admit;
+            return;
+        }
+        if (queue_size(&sim->admit_queue) != 0) //can dispatch
+        {
+            sim->next_event = DISPATCH;
+            sim->time += TIME_CONTEXT_SWITCH;
+            return;
+        }
+
+        //nothing to dispatch so admit next process
+        sim->next_event = ADMIT_NOT_RUNNING;
+        sim->time += time_admit;
+        return;
+    }
+
+    if (queue_size(&sim->admit_queue) != 0)
+    {
+        sim->next_event = DISPATCH;
+        sim->time += TIME_CONTEXT_SWITCH;
+        return;
+    }
+
+    //nothing can run, nothing to admit
+    sim->next_event = DONE;
+}
+void dispatch_handler(SimulationState *sim, const Tracefile *tf)
+{
+    printf("dispatch\n");
+    sim->running_process = queue_dequeue(&sim->admit_queue);
+    print_dispatch(sim, tf);
+    sim->next_event = RUNNING;
+}
+void io_handler(SimulationState *sim, const Tracefile *tf)
+{
+    printf("io\n");
+    //todo: implement io
+    sim->next_event = NOT_RUNNING;
+}
+void running_handler(SimulationState *sim, const Tracefile *tf, int time_quantum)
+{
+    printf("running\n");
+    if (can_admit(sim, tf))
+    {
+        sim->next_event = TRY_ADMIT_RUNNING;
+        return;
+    }
+    int pid = sim->running_process;
+    int eid = sim->processes[pid].current_event;
+    int time_event = tf->processes[pid].events[eid].start_time - sim->processes[pid].progress;
+    if (time_quantum < time_event)
+    {
+        sim->next_event = EXPIRE;
+        sim->time += time_quantum;
+        sim->processes[pid].progress += time_quantum;
+    }
+    else
+    {
+        sim->next_event = EVENT;
+        sim->time += time_event;
+        sim->processes[pid].progress += time_event;
+    }
+}
+void try_admit_running_handler(SimulationState *sim, const Tracefile *tf, int time_quantum)
+{
+    int time_admit = tf->processes[sim->next_process].start_time - sim->time;
+    int pid = sim->running_process;
+    int eid = sim->processes[pid].current_event;
+    int time_event = tf->processes[pid].events[eid].start_time - sim->processes[pid].progress;
+
+    switch (min_index3(time_admit, time_event, time_quantum))
+    {
+        case 0:
+            sim->next_event = ADMIT_RUNNING;
+            sim->time += time_admit;
+            sim->processes[pid].progress += time_admit;
+            break;
+        case 1:
+            sim->next_event = EVENT;
+            sim->time += time_event;
+            sim->processes[pid].progress += time_event;
+            break;
+        case 2:
+            sim->next_event = EXPIRE;
+            sim->time += time_quantum;
+            sim->processes[pid].progress += time_quantum;
+    }
+}
+void admit_running_handler(SimulationState *sim, const Tracefile *tf)
+{
+    printf("admit running\n");
+    queue_enqueue(&sim->admit_queue, sim->next_process);
+    print_admit(sim, tf);
+    sim->next_event = RUNNING;
+    sim->next_process++;
+}
+void event_handler(SimulationState *sim, const Tracefile *tf)
+{
+    int pid = sim->running_process;
+    int eid = sim->processes[pid].current_event;
+    if (tf->processes[pid].events[eid].type == ev_exit)
+    {
+        sim->next_event = RELEASE;
+    }
+    else
+    {
+        sim->next_event = BLOCK;
+    }
+}
+void release_handler(SimulationState *sim, Tracefile const *tf)
+{
+    printf("release\n");
+    print_release(sim, tf);
+    sim->running_process = -1;
+    sim->next_event = NOT_RUNNING;
+}
+void block_handler(SimulationState *sim, const Tracefile *tf)
+{
+
+}
+void expire_handler(SimulationState *sim, const Tracefile *tf)
+{
+    printf("expire\n");
+    if (queue_size(&sim->admit_queue) == 0)
+    {
+        print_refresh(sim, tf);
+        sim->next_event = RUNNING;
+    }
+    else
+    {
+        print_expire(sim, tf);
+        sim->running_process = -1;
+        sim->next_event = NOT_RUNNING;
+    }
+}
+
+int min_index3(int a, int b, int c)
+{
+    int min = a;
+    if (b < min)
+        min = b;
+    if (c < min)
+        min = c;
+    if (a == min)
+        return 0;
+    if (b == min)
+        return 1;
+    return 2;
+}
+bool can_admit(SimulationState *sim, const Tracefile *tf)
+{
+    return sim->next_process < tf->num_processes;
 }
 //  ----------------------------------------------------------------------
 
@@ -322,11 +495,6 @@ int main(int argc, char const *argv[])
 
 //  vim: ts=8 sw=4
 
-enum event_type
-{
-    ev_io, ev_exit
-};
-
 
 void push_io_event_detail(Event *e, Device devices[], int num_devices, char const *start_time, char const *device,
                           char const *data)
@@ -345,7 +513,6 @@ void push_io_event_detail(Event *e, Device devices[], int num_devices, char cons
     e->data_size = parse_int(data, "Error: io event with non decimal data size (%s)");
 
 }
-
 void push_io_event(Tracefile *tf, char const *start_time, char const *device, char const *data)
 {
 
@@ -355,15 +522,12 @@ void push_io_event(Tracefile *tf, char const *start_time, char const *device, ch
 
     p->num_events++;
 }
-
-
 void push_exit_event_detail(Event *e, char const *start_time)
 {
     e->type = ev_exit;
     e->start_time = parse_int(start_time, "Error: exit event with non decimal start time (%s)");
 
 }
-
 void push_exit_event(Tracefile *tf, char const *start_time)
 {
     Process *p = tf->processes + tf->num_processes;
@@ -372,14 +536,12 @@ void push_exit_event(Tracefile *tf, char const *start_time)
 
     p->num_events++;
 }
-
 void push_device(Tracefile *tf, char const *name, char const *rate)
 {
     tf->devices[tf->num_devices].rate = parse_int(rate, "Error: device with non decimal rate (%s)");
     strcpy(tf->devices[tf->num_devices].name, name);
     tf->num_devices++;
 }
-
 void push_process(Tracefile *tf, char const *id, char const *start_time)
 {
     tf->processes[tf->num_processes].id = parse_int(id, "Error: process with non decimal id (%s)");
@@ -388,7 +550,6 @@ void push_process(Tracefile *tf, char const *id, char const *start_time)
 }
 
 #define CHAR_COMMENT            '#'
-
 #define MAXWORD                 20
 
 void parse_line(Tracefile *tf, char const *program, char const *tracefile, char const *line, int line_num)
@@ -402,9 +563,6 @@ void parse_line(Tracefile *tf, char const *program, char const *tracefile, char 
     //  ATTEMPT TO BREAK EACH LINE INTO A NUMBER OF WORDS, USING sscanf()
     char word[4][MAXWORD];
     int nwords = sscanf(line, "%s %s %s %s", word[0], word[1], word[2], word[3]);
-
-#undef  MAXWORD
-#undef  CHAR_COMMENT
 
     //  WE WILL SIMPLY IGNORE ANY LINE WITHOUT ANY WORDS
     if (nwords <= 0)
@@ -530,12 +688,10 @@ void queue_enqueue(Queue *q, int item)
     q->items[back] = item;
     q->size++;
 }
-
 int queue_size(Queue const *q)
 {
     return q->size;
 }
-
 int queue_at(Queue const *q, int i)
 {
     //check for out of bounds
@@ -550,7 +706,6 @@ int queue_at(Queue const *q, int i)
 
     return q->items[index];
 }
-
 int queue_dequeue(Queue *q)
 {
     //check for underflow
@@ -580,7 +735,7 @@ void initialize_simulation(SimulationState *sim, Tracefile const *tf)
     if (tf->num_processes == 0)
         sim->next_event = DONE;                 //no processes so nothing to do
 
-    sim->next_event = ADMIT;                    //admit the first process
+    sim->next_event = ADMIT_NOT_RUNNING;        //admit the first process
     sim->next_process = 0;                      //start on process index 0
     sim->time = tf->processes[0].start_time;    //start when the first process starts
     sim->running_process = -1;                  //no process is running
@@ -600,11 +755,6 @@ void initialize_simulation(SimulationState *sim, Tracefile const *tf)
     }
 }
 
-void admit_next_process(SimulationState *sim)
-{
-    queue_enqueue(&sim->admit_queue, sim->next_process);
-}
-
 int next_process_time(SimulationState const *sim, Tracefile const *tf)
 {
     if (sim->next_process < tf->num_processes)
@@ -617,63 +767,6 @@ int next_event_time(SimulationState const *sim, Tracefile const *tf)
     int pid = sim->running_process;
     ProcessSim const *psim = &sim->processes[pid];
     return tf->processes[pid].events[psim->current_event].start_time - psim->progress;
-}
-
-int min_index3(int a, int b, int c)
-{
-    int min = a;
-    if (b < min)
-        min = b;
-    if (c < min)
-        min = c;
-    if (min == a)
-        return 0;
-    if (min == b)
-        return 1;
-    return 2;
-}
-
-/**
- *  When a process is running only some events can occur next
- *      case EXPIRE: the time quantum runs out and the event expires
- *      case IO: the process starts an i/o request
- *      case RELEASE: the process terminates
- *      case ADMIT: a new process tries to start
- */
-void setup_next_running_event(SimulationState *sim, Tracefile const *tf, int tq)
-{
-    int event = next_event_time(sim, tf);
-    int admit = next_process_time(sim, tf);
-
-    ProcessSim *ps = &sim->processes[sim->running_process];
-    Process const *p = &tf->processes[sim->running_process];
-
-    switch (min_index3(event, admit, tq))
-    {
-        case 0:
-            if (p->events[ps->current_event].type == IO)
-            {
-                sim->next_event = BLOCK;
-                sim->time += event;
-                sim->processes[sim->running_process].progress += event;
-            }
-            else
-            {
-                sim->next_event = RELEASE;
-                sim->time += event;
-                sim->processes[sim->running_process].progress += event;
-            }
-            break;
-        case 1:
-            sim->next_event = ADMIT;
-            sim->time += admit;
-            sim->processes[sim->running_process].progress += admit;
-        case 2:
-            sim->next_event = EXPIRE;
-            sim->time += tq;
-            sim->processes[sim->running_process].progress += tq;
-            break;
-    }
 }
 
 void print_admit(SimulationState const *sim, const Tracefile *tf)
