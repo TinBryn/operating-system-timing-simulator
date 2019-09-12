@@ -57,7 +57,6 @@ typedef struct Process
 } Process;
 
 
-
 typedef struct Tracefile
 {
     Device devices[MAX_DEVICES];
@@ -66,13 +65,14 @@ typedef struct Tracefile
     int num_processes;
 } Tracefile;
 
+#define QUEUE_SIZE MAX_PROCESSES
+
 typedef struct Queue
 {
-    int items[MAX_PROCESSES];
+    int items[QUEUE_SIZE];
     int front;
     int size;
 } Queue;
-
 
 
 int queue_size(Queue const *q);
@@ -87,7 +87,8 @@ void print_tracefile(Tracefile const *tf);
 //  ----------------------------------------------------------------------
 
 //  SIMULATE THE JOB-MIX FROM THE TRACEFILE, FOR THE GIVEN TIME-QUANTUM
-void simulate_job_mix(Tracefile const *tf, int time_quantum, int *optimal_time_quantum, int *total_process_completion_time)
+void
+simulate_job_mix(Tracefile const *tf, int time_quantum, int *optimal_time_quantum, int *total_process_completion_time)
 {
     (void) tf;
     *optimal_time_quantum = 0;
@@ -241,7 +242,8 @@ void push_device(Tracefile *tf, char const *name, char const *rate)
 void push_process(Tracefile *tf, char const *id, char const *start_time)
 {
     tf->processes[tf->num_processes].id = parse_int(id, "Error: process with non decimal id (%s)");
-    tf->processes[tf->num_processes].start_time = parse_int(start_time, "Error: process with non decimal start time (%s)");
+    tf->processes[tf->num_processes].start_time = parse_int(start_time,
+                                                            "Error: process with non decimal start time (%s)");
 }
 
 #define CHAR_COMMENT            '#'
@@ -344,19 +346,19 @@ void usage(char const *program)
 
 void print_tracefile(Tracefile const *tf)
 {
-    for(int i = 0; i < tf->num_devices; i++)
+    for (int i = 0; i < tf->num_devices; i++)
     {
         printf("device   %s %i bytes/sec\n", tf->devices[i].name, tf->devices[i].rate);
     }
     printf("reboot\n");
-    for (int i=0; i < tf->num_processes; i++)
+    for (int i = 0; i < tf->num_processes; i++)
     {
         Process const *p = &tf->processes[i];
         printf("process %i %i {\n", p->id, p->start_time);
-        for (int j=0; j < p->num_events; j++)
+        for (int j = 0; j < p->num_events; j++)
         {
             Event const *e = &p->events[j];
-            switch(e->type)
+            switch (e->type)
             {
                 case ev_io:
                     printf("  i/o ");
@@ -377,17 +379,51 @@ void print_tracefile(Tracefile const *tf)
 
 void queue_enqueue(Queue *q, int item)
 {
-
+    //check for overflow
+    if (q->size >= QUEUE_SIZE)
+    {
+        printf("Trying to enqueue to a full queue");
+        exit(EXIT_FAILURE);
+    }
+    int back = (q->front + q->size) % QUEUE_SIZE;
+    q->items[back] = item;
+    q->size++;
 }
 int queue_size(Queue const *q)
 {
     return q->size;
 }
+
 int queue_at(Queue const *q, int i)
 {
-    return 0;
+    //check for out of bounds
+    if (i < 0 || i >= q->size)
+    {
+        printf("Queue index out of bounds (%i) should be in [0, %i)", i, q->size);
+        exit(EXIT_FAILURE);
+    }
+
+    //find where to look in the array
+    int index = (q->front + i) % QUEUE_SIZE;
+
+    return q->items[index];
 }
+
 int queue_dequeue(Queue *q)
 {
-    return 0;
+    //check for underflow
+    if (q->size <= 0)
+    {
+        printf("Trying to dequeue from an empty queue");
+        exit(EXIT_FAILURE);
+    }
+    //retrieve the item
+    int item = queue_at(q, 0);
+
+    //decrement the size
+    q->size--;
+
+    //move the front of the queue back one
+    q->front = (q->front + 1) % QUEUE_SIZE;
+    return item;
 }
