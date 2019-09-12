@@ -95,6 +95,18 @@ simulate_job_mix(Tracefile const *tf, int time_quantum)
     printf("running simulate_job_mix( time_quantum = %i usecs )\n",
            time_quantum);
 
+    //initialise all queues used
+    Queue admit_queue;
+    queue_init(&admit_queue);
+    Queue blocked_queues[MAX_DEVICES];
+    for (int i=0; i < MAX_DEVICES; i++)
+    {
+        queue_init(&blocked_queues[i]);
+    }
+
+
+
+
     return total_process_completion_time;
 }
 
