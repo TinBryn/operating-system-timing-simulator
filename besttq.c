@@ -26,6 +26,7 @@
 
 #define TIME_CONTEXT_SWITCH     5
 #define TIME_ACQUIRE_BUS        5
+#define MICROSECONDS            1000000
 
 #define CHAR_COMMENT            '#'
 #define MAXWORD                 20
@@ -50,11 +51,6 @@ typedef struct Tracefile Tracefile;
 typedef struct ProcessSim ProcessSim;
 typedef struct Queue Queue;
 typedef struct SimulationState SimulationState;
-
-//utility prototypes
-
-int min_index3(int a, int b, int c);
-
 
 //struct method prototypes
 
@@ -137,6 +133,7 @@ struct SimulationState
     int time_to_event;
     int time_to_databus;
     int time_to_dispatch;
+    int device_priorities[MAX_DEVICES];
 };
 
 enum
@@ -240,6 +237,7 @@ void FSM_loop(SimulationState *sim, const Tracefile *tf, int time_quantum)
         case DATABUS:
             advance_time(sim, sim->time_to_databus);
             FSM_databus(sim, tf, time_quantum);
+            FSM_loop(sim, tf, time_quantum);
             break;
         case DISPATCH:
             advance_time(sim, sim->time_to_dispatch);
@@ -278,7 +276,7 @@ void FSM_admit(SimulationState *sim, const Tracefile *tf)
 
 void FSM_expire(SimulationState *sim, Tracefile const *tf, int time_quantum)
 {
-    //printf("\033[45m");
+    printf("\033[47m");
     print_time(sim);
     printf("[expire]    ");
 
@@ -310,11 +308,13 @@ void FSM_databus(SimulationState *sim, Tracefile const *tf, int time_quantum)
 {
     print_time(sim);
     printf("[databus]   ");
-    print_databus(sim, tf);
 
     //no more io so remove process and triggers
     sim->time_to_databus = -1;
     queue_enqueue(&sim->admit_queue, sim->io_process);
+    if (sim->running_process == -1)
+        sim->time_to_dispatch = TIME_CONTEXT_SWITCH;
+    print_databus(sim, tf);
     sim->io_process = -1;
 
     FSM_start_io(sim, tf, time_quantum);
@@ -353,7 +353,6 @@ void FSM_event(SimulationState *sim, Tracefile const *tf, int time_quantum)
             break;
         case ev_io:
             FSM_block(sim, tf, time_quantum);
-            sim->processes[pid].current_event++;
             break;
         default:
             break;
@@ -364,7 +363,7 @@ void FSM_release(SimulationState *sim, Tracefile const *tf, int time_quantum)
 {
     printf("\033[41m");
     print_time(sim);
-    printf("[event]     ");
+    printf("[release]   ");
     print_release(sim, tf);
 
     sim->running_process = -1;
@@ -376,11 +375,12 @@ void FSM_release(SimulationState *sim, Tracefile const *tf, int time_quantum)
     sim->time_to_expire = -1;
     sim->time_to_event = -1;
 }
+
 void FSM_block(SimulationState *sim, Tracefile const *tf, int time_quantum)
 {
-
+    printf("\033[43m");
     print_time(sim);
-    printf("[event]     ");
+    printf("[block]     ");
     print_block(sim, tf);
 
     int pid = sim->running_process;
@@ -389,12 +389,44 @@ void FSM_block(SimulationState *sim, Tracefile const *tf, int time_quantum)
     //get the requested device and add it to the queue
     int did = tf->processes[pid].events[eid].device_index;
     queue_enqueue(&sim->blocked_queues[did], pid);
-    FSM_start_io(sim, tf, time_quantum);
+    sim->running_process = -1;
+    sim->time_to_expire = -1;
+    sim->time_to_event = -1;
+
+    if (sim->io_process == -1)
+    {
+        FSM_start_io(sim, tf, time_quantum);
+
+    }
+    if (queue_size(&sim->admit_queue) != 0)
+        sim->time_to_dispatch = TIME_CONTEXT_SWITCH;
 }
 
 void FSM_start_io(SimulationState *sim, Tracefile const *tf, int time_quantum)
 {
+    for (int i = 0; i < tf->num_devices; i++)
+    {
+        int device = sim->device_priorities[i];
+        if (queue_size(&sim->blocked_queues[device]) != 0)
+        {
+            sim->io_process = queue_dequeue(&sim->blocked_queues[device]);
+            sim->io_device = device;
 
+            int pid = sim->io_process;
+            int eid = sim->processes[pid].current_event;
+
+            long data = (long) tf->processes[pid].events[eid].data_size * MICROSECONDS;
+            int rate = tf->devices[device].rate;
+
+            long time = data / rate;
+            if (data % rate != 0)
+                time += 1;
+            sim->time_to_databus = time + TIME_ACQUIRE_BUS;
+
+            sim->processes[pid].current_event++;
+            break;
+        }
+    }
 }
 
 int next_trigger(SimulationState *sim)
@@ -750,7 +782,6 @@ int queue_at(Queue const *q, int i)
 
     return q->items[index];
 }
-
 int queue_dequeue(Queue *q)
 {
     //check for underflow
@@ -769,7 +800,6 @@ int queue_dequeue(Queue *q)
     q->front = (q->front + 1) % QUEUE_SIZE;
     return item;
 }
-
 void queue_init(Queue *q)
 {
     q->size = 0;
@@ -808,6 +838,30 @@ void initialize_simulation(SimulationState *sim, Tracefile const *tf)
         sim->processes[i].current_event = 0;
         sim->processes[i].progress = 0;
     }
+
+    //sort the device priorities
+
+    for (int i = 0; i < tf->num_devices; i++)
+    {
+        sim->device_priorities[i] = i;
+    }
+
+    for (int j = 1; j < tf->num_devices; j++)
+    {
+        int key = sim->device_priorities[j];
+        int i = j;
+        while (i > 0 && tf->devices[sim->device_priorities[i - 1]].rate < tf->devices[key].rate)
+        {
+            sim->device_priorities[i] = sim->device_priorities[i - 1];
+            i--;
+        }
+        sim->device_priorities[i] = key;
+    }
+
+    for (int i = 0; i < tf->num_devices; i++)
+    {
+        printf("rate %i: %i\n", i, tf->devices[sim->device_priorities[i]].rate);
+    }
 }
 
 int next_process_time(SimulationState const *sim, Tracefile const *tf)
@@ -830,13 +884,13 @@ void print_admit(SimulationState const *sim, const Tracefile *tf)
 
 void print_dispatch(SimulationState const *sim, Tracefile const *tf)
 {
-    printf("p%i.READY -> RUNNING  ",  tf->processes[sim->running_process].id);
+    printf("p%i.READY -> RUNNING  ", tf->processes[sim->running_process].id);
     print_state(tf, sim->running_process, &sim->admit_queue);
 }
 
 void print_refresh(SimulationState const *sim, const Tracefile *tf)
 {
-    printf("p%i.refreshTQ         ",  tf->processes[sim->running_process].id);
+    printf("p%i.refreshTQ         ", tf->processes[sim->running_process].id);
     print_state(tf, sim->running_process, &sim->admit_queue);
 }
 void print_release(SimulationState const *sim, const Tracefile *tf)
@@ -857,7 +911,7 @@ void print_databus(SimulationState const *sim, const Tracefile *tf)
 }
 void print_block(SimulationState const *sim, const Tracefile *tf)
 {
-    printf("p%i.RUNNING -> BLOCKED", sim->running_process);
+    printf("p%i.RUNNING -> BLOCKED", tf->processes[sim->running_process].id);
     print_state(tf, sim->running_process, &sim->admit_queue);
 }
 void print_time(SimulationState const *sim)
