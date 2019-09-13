@@ -127,7 +127,6 @@ struct SimulationState
     int next_process;
     int running_process;
     int io_process;
-    int io_device;
     int time_to_admit;
     int time_to_expire;
     int time_to_event;
@@ -182,11 +181,11 @@ void FSM_admit(SimulationState *sim, Tracefile const *tf);
 void FSM_dispatch(SimulationState *sim, Tracefile const *tf, int time_quantum);
 void FSM_expire(SimulationState *sim, Tracefile const *tf, int time_quantum);
 void FSM_loop(SimulationState *sim, Tracefile const *tf, int time_quantum);
-void FSM_databus(SimulationState *sim, Tracefile const *tf, int time_quantum);
-void FSM_event(SimulationState *sim, Tracefile const *tf, int time_quantum);
-void FSM_release(SimulationState *sim, Tracefile const *tf, int time_quantum);
-void FSM_block(SimulationState *sim, Tracefile const *tf, int time_quantum);
-void FSM_start_io(SimulationState *sim, Tracefile const *tf, int time_quantum);
+void FSM_databus(SimulationState *sim, Tracefile const *tf);
+void FSM_event(SimulationState *sim, Tracefile const *tf);
+void FSM_release(SimulationState *sim, Tracefile const *tf);
+void FSM_block(SimulationState *sim, Tracefile const *tf);
+void FSM_start_io(SimulationState *sim, Tracefile const *tf);
 
 void advance_time(SimulationState *sim, int time_delta);
 
@@ -231,12 +230,12 @@ void FSM_loop(SimulationState *sim, const Tracefile *tf, int time_quantum)
             break;
         case EVENT:
             advance_time(sim, sim->time_to_event);
-            FSM_event(sim, tf, time_quantum);
+            FSM_event(sim, tf);
             FSM_loop(sim, tf, time_quantum);
             break;
         case DATABUS:
             advance_time(sim, sim->time_to_databus);
-            FSM_databus(sim, tf, time_quantum);
+            FSM_databus(sim, tf);
             FSM_loop(sim, tf, time_quantum);
             break;
         case DISPATCH:
@@ -304,7 +303,7 @@ void FSM_expire(SimulationState *sim, Tracefile const *tf, int time_quantum)
     }
 }
 
-void FSM_databus(SimulationState *sim, Tracefile const *tf, int time_quantum)
+void FSM_databus(SimulationState *sim, Tracefile const *tf)
 {
     print_time(sim);
     printf("[databus]   ");
@@ -317,7 +316,7 @@ void FSM_databus(SimulationState *sim, Tracefile const *tf, int time_quantum)
     print_databus(sim, tf);
     sim->io_process = -1;
 
-    FSM_start_io(sim, tf, time_quantum);
+    FSM_start_io(sim, tf);
 }
 
 void FSM_dispatch(SimulationState *sim, Tracefile const *tf, int time_quantum)
@@ -338,7 +337,7 @@ void FSM_dispatch(SimulationState *sim, Tracefile const *tf, int time_quantum)
     sim->time_to_dispatch = -1;
 }
 
-void FSM_event(SimulationState *sim, Tracefile const *tf, int time_quantum)
+void FSM_event(SimulationState *sim, Tracefile const *tf)
 {
     advance_time(sim, sim->time_to_event);
 
@@ -348,18 +347,18 @@ void FSM_event(SimulationState *sim, Tracefile const *tf, int time_quantum)
     switch (tf->processes[pid].events[eid].type)
     {
         case ev_exit:
-            FSM_release(sim, tf, time_quantum);
+            FSM_release(sim, tf);
             sim->processes[pid].current_event++;
             break;
         case ev_io:
-            FSM_block(sim, tf, time_quantum);
+            FSM_block(sim, tf);
             break;
         default:
             break;
     }
 }
 
-void FSM_release(SimulationState *sim, Tracefile const *tf, int time_quantum)
+void FSM_release(SimulationState *sim, Tracefile const *tf)
 {
     printf("\033[41m");
     print_time(sim);
@@ -376,7 +375,7 @@ void FSM_release(SimulationState *sim, Tracefile const *tf, int time_quantum)
     sim->time_to_event = -1;
 }
 
-void FSM_block(SimulationState *sim, Tracefile const *tf, int time_quantum)
+void FSM_block(SimulationState *sim, Tracefile const *tf)
 {
     printf("\033[43m");
     print_time(sim);
@@ -395,14 +394,14 @@ void FSM_block(SimulationState *sim, Tracefile const *tf, int time_quantum)
 
     if (sim->io_process == -1)
     {
-        FSM_start_io(sim, tf, time_quantum);
+        FSM_start_io(sim, tf);
 
     }
     if (queue_size(&sim->admit_queue) != 0)
         sim->time_to_dispatch = TIME_CONTEXT_SWITCH;
 }
 
-void FSM_start_io(SimulationState *sim, Tracefile const *tf, int time_quantum)
+void FSM_start_io(SimulationState *sim, Tracefile const *tf)
 {
     for (int i = 0; i < tf->num_devices; i++)
     {
@@ -410,7 +409,6 @@ void FSM_start_io(SimulationState *sim, Tracefile const *tf, int time_quantum)
         if (queue_size(&sim->blocked_queues[device]) != 0)
         {
             sim->io_process = queue_dequeue(&sim->blocked_queues[device]);
-            sim->io_device = device;
 
             int pid = sim->io_process;
             int eid = sim->processes[pid].current_event;
@@ -867,13 +865,6 @@ void initialize_simulation(SimulationState *sim, Tracefile const *tf)
 int next_process_time(SimulationState const *sim, Tracefile const *tf)
 {
     return tf->processes[sim->next_process].start_time - sim->time;
-}
-
-int next_event_time(SimulationState const *sim, Tracefile const *tf)
-{
-    int pid = sim->running_process;
-    ProcessSim const *psim = &sim->processes[pid];
-    return tf->processes[pid].events[psim->current_event].start_time - psim->progress;
 }
 
 void print_admit(SimulationState const *sim, const Tracefile *tf)
